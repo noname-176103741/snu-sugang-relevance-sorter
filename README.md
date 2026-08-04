@@ -27,3 +27,9 @@
 - 사이트 DOM, 폼 필드명, Excel 열 순서 또는 Excel 엔드포인트가 바뀌면 업데이트가 필요할 수 있습니다.
 - 검색어가 없는 상세 조건 검색은 관련도 점수가 모두 같으므로 Excel 원래 순서를 유지합니다.
 - 수강신청은 학교 정책과 서버 검증을 그대로 사용합니다. 이 확장프로그램은 자동 신청이나 보안문자 우회를 하지 않습니다.
+
+## 라이선스
+
+직접 작성한 프로젝트 코드는 [The Unlicense](UNLICENSE)에 따라 공개 도메인으로 제공합니다.
+
+`vendor/xlsx.full.min.js`는 이 라이선스의 적용 대상이 아니며, SheetJS Community Edition의 Apache License 2.0을 따릅니다. 자세한 출처와 고지는 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), 전체 라이선스는 [LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt)를 참조하세요.
