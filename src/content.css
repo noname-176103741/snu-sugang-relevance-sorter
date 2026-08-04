@@ -1,0 +1,94 @@
+html.srs-active:not(.srs-ready) .course-list-wrap,
+html.srs-active:not(.srs-ready) .total-list-count {
+  visibility: hidden !important;
+}
+
+.srs-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 16px;
+  padding: 10px 14px;
+  color: #285da9;
+  font-size: 14px;
+  line-height: 1.45;
+  border: 1px solid #d7e3f7;
+  border-radius: 4px;
+  background: #f4f8ff;
+}
+
+.srs-status.srs-loading::before {
+  width: 14px;
+  height: 14px;
+  content: "";
+  border: 2px solid #b9cceb;
+  border-top-color: #376dc8;
+  border-radius: 50%;
+  animation: srs-spin 0.8s linear infinite;
+  flex: 0 0 auto;
+}
+
+.srs-status.srs-error {
+  color: #9c2f25;
+  border-color: #efc9c4;
+  background: #fff6f5;
+}
+
+.srs-status.srs-complete::before {
+  content: "✓";
+  font-weight: 700;
+}
+
+.srs-empty {
+  padding: 50px 20px;
+  color: #777;
+  font-size: 15px;
+  text-align: center;
+  border-top: 1px solid #ddd;
+  border-bottom: 1px solid #ddd;
+}
+
+.course-info-item .srs-subtitle {
+  margin-left: 4px;
+  color: inherit;
+  font-weight: inherit;
+}
+
+.course-info-item .srs-note {
+  max-width: 500px;
+  color: #777;
+  font-size: 12px;
+}
+
+/* Keep the native foreign-language globe from inheriting the site's badge style. */
+.course-info-item .course-info .state .icon-remo span.globe {
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.cc-paging a[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+@keyframes srs-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 999px) {
+  .srs-status {
+    margin-right: 14px;
+    margin-left: 14px;
+    font-size: 13px;
+  }
+
+  .course-info-item .srs-note {
+    max-width: none;
+  }
+}

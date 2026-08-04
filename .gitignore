@@ -1,0 +1,8 @@
+node_modules/
+temp/
+_tmp_*/
+test-results/
+tests/
+tools/
+package.json
+package-lock.json
