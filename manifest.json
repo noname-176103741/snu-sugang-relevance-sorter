@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "서울대 수강검색 관련도 정렬",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "강좌검색 Excel 전체 결과를 교과목명과 부제명 관련도순으로 정렬하고 클라이언트에서 페이지를 이동합니다.",
   "content_scripts": [
     {

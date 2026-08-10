@@ -56,7 +56,14 @@
     courses: [],
     currentPage: 1,
     query: '',
+    nativeCourseMetadata: new Map(),
+    nativePageRequests: new Map(),
+    renderVersion: 0,
   };
+
+  function courseKey(courseCode, lectureNumber) {
+    return `${String(courseCode || '').trim()}::${String(lectureNumber || '').trim()}`;
+  }
 
   function createElement(tagName, options = {}) {
     const element = document.createElement(tagName);
@@ -93,6 +100,14 @@
     parameters.set('pageNo', '1');
     if (!parameters.has('srchCurrPage')) parameters.set('srchCurrPage', '1');
     if (!parameters.has('srchPageSize')) parameters.set('srchPageSize', '9999');
+    return parameters;
+  }
+
+  function buildNativePageParameters(page) {
+    const parameters = buildExcelParameters();
+    parameters.set('workType', 'S');
+    parameters.set('pageNo', String(page));
+    parameters.set('srchCurrPage', String(page));
     return parameters;
   }
 
@@ -134,6 +149,105 @@
     return SugangRelevanceCore.parseExcelRows(rows).courses;
   }
 
+  function metadataFromNativeItem(item) {
+    const courseCode = item.querySelector('input[name="sbjtCd"]')?.value || '';
+    const lectureNumber = item.querySelector('input[name="ltNo"]')?.value || '';
+    if (!courseCode || !lectureNumber) return null;
+
+    const textRows = item.querySelectorAll('.course-info > li.txt');
+    const identitySpans = textRows[0]?.querySelectorAll(':scope > span') || [];
+    const metricSpans = textRows[1]?.querySelectorAll(':scope > span') || [];
+    const stateItem = item.querySelector('.course-info > li.state');
+    const nativeFlags = stateItem?.querySelector('.icon-remo');
+    const nativeCourseIcons = item.querySelector('.course-icons');
+
+    return {
+      key: courseKey(courseCode, lectureNumber),
+      professor: identitySpans[0]?.textContent?.trim() || '',
+      department: identitySpans[1]?.textContent?.trim() || '',
+      enrollmentCapacity: metricSpans[0]?.querySelector('em')?.textContent?.trim() || '',
+      totalEnrolled: metricSpans[1]?.querySelector('em')?.textContent?.trim() || '',
+      credit: metricSpans[2]?.querySelector('em')?.textContent?.trim() || '',
+      schedule: metricSpans[3]?.textContent?.trim() || '',
+      subtitleCode: item.querySelector('input[name="sbjtSubhCd"]')?.value || '000',
+      badges: stateItem ? [...stateItem.children]
+        .filter((element) => !element.classList.contains('icon-remo'))
+        .map((element) => ({
+          tagName: /^(SPAN|DIV|EM)$/.test(element.tagName) ? element.tagName.toLocaleLowerCase() : 'span',
+          className: typeof element.className === 'string' ? element.className : '',
+          text: element.childElementCount === 0 ? (element.textContent?.trim() || '') : '',
+          lang: element.getAttribute('lang') || '',
+          title: element.getAttribute('title') || '',
+          dialogTarget: element.getAttribute('data-dialog-target') || '',
+          children: [...element.children].map((child) => ({
+            tagName: /^(SPAN|DIV|EM)$/.test(child.tagName) ? child.tagName.toLocaleLowerCase() : 'span',
+            className: typeof child.className === 'string' ? child.className : '',
+            text: child.textContent?.trim() || '',
+            lang: child.getAttribute('lang') || '',
+            title: child.getAttribute('title') || '',
+          })),
+        }))
+        .filter((badge) => badge.text || badge.children.length > 0) : [],
+      flags: nativeFlags ? [...nativeFlags.children].map((wrapper) => {
+        const marker = wrapper.querySelector('span') || wrapper;
+        return {
+          title: wrapper.getAttribute('title') || '',
+          className: marker.className || '',
+          text: marker.textContent?.trim() || '',
+        };
+      }) : [],
+      courseIcons: nativeCourseIcons ? [...nativeCourseIcons.children].map((element) => ({
+        tagName: /^(SPAN|DIV|EM)$/.test(element.tagName) ? element.tagName.toLocaleLowerCase() : 'span',
+        className: typeof element.className === 'string' ? element.className : '',
+        style: element.getAttribute('style') || '',
+        title: element.getAttribute('title') || '',
+        text: [...element.childNodes]
+          .filter((node) => node.nodeType === Node.TEXT_NODE)
+          .map((node) => node.textContent?.trim() || '')
+          .join(''),
+        children: [...element.children].map((child) => ({
+          tagName: /^(SPAN|DIV|EM)$/.test(child.tagName) ? child.tagName.toLocaleLowerCase() : 'span',
+          className: typeof child.className === 'string' ? child.className : '',
+          text: child.textContent?.trim() || '',
+          title: child.getAttribute('title') || '',
+        })),
+      })) : [],
+    };
+  }
+
+  function captureNativeMetadata(root) {
+    for (const item of root.querySelectorAll('.course-info-list .course-info-item')) {
+      const metadata = metadataFromNativeItem(item);
+      if (metadata) state.nativeCourseMetadata.set(metadata.key, metadata);
+    }
+  }
+
+  async function fetchNativePageMetadata(page) {
+    if (state.nativePageRequests.has(page)) return state.nativePageRequests.get(page);
+
+    // Excel에 없는 취소여석·제한 배지·실시간 인원은 원본 검색 카드에서만 얻을 수 있다.
+    const request = (async () => {
+      const response = await fetch('/sugang/cc/cc100InterfaceSrch.action', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+        },
+        body: buildNativePageParameters(page).toString(),
+      });
+      if (!response.ok) throw new Error(`원본 강좌 상태 응답 오류 (${response.status})`);
+
+      const html = await response.text();
+      const parsed = new DOMParser().parseFromString(html, 'text/html');
+      captureNativeMetadata(parsed);
+    })().catch((error) => {
+      console.warn(`[서울대 수강검색 관련도 정렬] 원본 ${page}페이지 상태 동기화 실패`, error);
+    });
+
+    state.nativePageRequests.set(page, request);
+    return request;
+  }
+
   function insertStatus() {
     const existing = document.querySelector('.srs-status');
     if (existing) return existing;
@@ -172,14 +286,24 @@
     return { semester: combined.slice(0, 10), detailSemester: combined.slice(10) };
   }
 
-  function appendCourseFlags(container, course) {
-    const note = course.note.normalize('NFKC').toLocaleLowerCase('ko-KR');
+  function appendCourseFlags(container, course, metadata) {
+    if (metadata) {
+      for (const flag of metadata.flags) {
+        const wrapper = createElement('div', { attributes: flag.title ? { title: flag.title } : {} });
+        wrapper.append(createElement('span', { className: flag.className, text: flag.text }));
+        container.append(wrapper);
+      }
+      return;
+    }
+
+    const rawNote = course.note || '';
+    const note = rawNote.normalize('NFKC').toLocaleLowerCase('ko-KR');
     const flags = [];
-    if (/ⓞ|원격/.test(note)) flags.push({ label: 'O', title: '원격수업강좌' });
-    if (/ⓜ|군휴학/.test(note)) flags.push({ label: 'M', title: '군휴학생 원격수업 강좌' });
-    if (/ⓒ|cross|크로스/.test(note)) flags.push({ label: 'C', title: 'Cross-Listing' });
-    if (/ⓡ|수강반/.test(note)) flags.push({ label: 'R', title: '수강반 제한' });
-    if (/ⓚ|거점/.test(note)) flags.push({ label: 'K', title: '거점국립대학 원격수업 강좌' });
+    if (/[ⓞⓄ]/.test(rawNote) || /원격/.test(note)) flags.push({ label: 'O', title: '원격수업강좌' });
+    if (/[ⓜⓂ]/.test(rawNote) || /군휴학/.test(note)) flags.push({ label: 'M', title: '군휴학생 원격수업 강좌' });
+    if (/[ⓒⒸ]/.test(rawNote) || /cross|크로스/.test(note)) flags.push({ label: 'C', title: 'Cross-Listing' });
+    if (/[ⓡⓇ®]/.test(rawNote) || /수강반/.test(note)) flags.push({ label: 'R', title: '수강반 제한' });
+    if (/[ⓚⓀ]/.test(rawNote) || /거점/.test(note)) flags.push({ label: 'K', title: '거점국립대학 원격수업 강좌' });
 
     for (const flag of flags) {
       const wrapper = createElement('div', { attributes: { title: flag.title } });
@@ -195,6 +319,53 @@
     }
   }
 
+  function appendNativeBadges(container, metadata) {
+    for (const badge of metadata?.badges || []) {
+      const attributes = {};
+      if (badge.lang) attributes.lang = badge.lang;
+      if (badge.title) attributes.title = badge.title;
+      if (badge.dialogTarget) attributes['data-dialog-target'] = badge.dialogTarget;
+      const element = createElement(badge.tagName, {
+        className: badge.className,
+        text: badge.text,
+        attributes,
+      });
+      for (const child of badge.children || []) {
+        const childAttributes = {};
+        if (child.lang) childAttributes.lang = child.lang;
+        if (child.title) childAttributes.title = child.title;
+        element.append(createElement(child.tagName, {
+          className: child.className,
+          text: child.text,
+          attributes: childAttributes,
+        }));
+      }
+      container.append(element);
+    }
+  }
+
+  function appendNativeCourseIcons(container, metadata) {
+    for (const icon of metadata?.courseIcons || []) {
+      const attributes = {};
+      if (icon.style) attributes.style = icon.style;
+      if (icon.title) attributes.title = icon.title;
+      const element = createElement(icon.tagName, {
+        className: icon.className,
+        attributes,
+      });
+      for (const child of icon.children || []) {
+        const childAttributes = child.title ? { title: child.title } : {};
+        element.append(createElement(child.tagName, {
+          className: child.className,
+          text: child.text,
+          attributes: childAttributes,
+        }));
+      }
+      if (icon.text) element.append(document.createTextNode(icon.text));
+      container.append(element);
+    }
+  }
+
   function labeledMetric(label, value) {
     const span = createElement('span', { attributes: { lang: 'ko' } });
     span.append(document.createTextNode(`${label} `), createElement('em', { text: value || '-' }));
@@ -202,7 +373,16 @@
   }
 
   function createCourseItem(course, index) {
-    const item = createElement('div', { className: 'course-info-item' });
+    const key = courseKey(course.courseCode, course.lectureNumber);
+    const metadata = state.nativeCourseMetadata.get(key);
+    const item = createElement('div', {
+      className: 'course-info-item',
+      attributes: {
+        'data-srs-course-key': key,
+        'data-srs-native-synced': metadata ? 'true' : 'false',
+        'data-srs-source-page': Math.floor(course.originalIndex / PAGE_SIZE) + 1,
+      },
+    });
     const left = createElement('div', { className: 'left' });
     const label = createElement('label', { className: 'cc-check-item round full' });
     const radio = createElement('input', {
@@ -227,7 +407,7 @@
       hiddenInput('ltTimeForTT', course.schedule, index),
       // Excel에는 부제 코드가 없으며, 사이트는 부제가 없는 강좌에 기본값 000을 사용한다.
       // 실제 수강신청 함수는 교과목번호와 강좌번호만 전송한다.
-      hiddenInput('sbjtSubhCd', '000', index),
+      hiddenInput('sbjtSubhCd', metadata?.subtitleCode || '000', index),
       hiddenInput('lsnTmtablFormaSmryCtnt_hidden', '', index),
     );
     left.append(label);
@@ -258,26 +438,43 @@
     const info = createElement('ul', { className: 'course-info' });
     const identity = createElement('li', { className: 'txt' });
     identity.append(
-      createElement('span', { text: `${course.professor || ''}\u00a0 ` }),
-      createElement('span', { text: `${course.department || course.college || ''}\u00a0 ` }),
+      createElement('span', {
+        text: `${metadata?.professor || course.professor || ''}\u00a0 `,
+        attributes: { 'data-srs-native-field': 'professor' },
+      }),
+      createElement('span', {
+        text: `${metadata?.department || course.department || course.college || ''}\u00a0 `,
+        attributes: { 'data-srs-native-field': 'department' },
+      }),
       createElement('span', { text: `${course.courseCode}(${course.lectureNumber})` }),
     );
     const metrics = createElement('li', { className: 'txt' });
-    metrics.append(
-      labeledMetric('수강신청인원/정원(재학생)', `${course.enrolled || '0'}/${course.capacity || '-'}`),
-      labeledMetric('총수강인원', course.enrolled || '0'),
-      labeledMetric('학점', course.credit || '-'),
-      createElement('span', { text: course.schedule || '' }),
+    const enrollmentCapacity = labeledMetric(
+      '수강신청인원/정원(재학생)',
+      metadata?.enrollmentCapacity || `${course.enrolled || '0'}/${course.capacity || '-'}`,
     );
+    enrollmentCapacity.dataset.srsNativeField = 'enrollmentCapacity';
+    const totalEnrolled = labeledMetric('총수강인원', metadata?.totalEnrolled || course.enrolled || '0');
+    totalEnrolled.dataset.srsNativeField = 'totalEnrolled';
+    const credit = labeledMetric('학점', metadata?.credit || course.credit || '-');
+    credit.dataset.srsNativeField = 'credit';
+    const schedule = createElement('span', {
+      text: metadata?.schedule || course.schedule || '',
+      attributes: { 'data-srs-native-field': 'schedule' },
+    });
+    metrics.append(enrollmentCapacity, totalEnrolled, credit, schedule);
     const stateItem = createElement('li', { className: 'state' });
     const flags = createElement('div', { className: 'icon-remo' });
-    appendCourseFlags(flags, course);
+    appendNativeBadges(stateItem, metadata);
+    appendCourseFlags(flags, course, metadata);
     stateItem.append(flags);
-    if (course.note) stateItem.append(createElement('div', { className: 'srs-note', text: course.note }));
+    if (!metadata && course.note) stateItem.append(createElement('div', { className: 'srs-note', text: course.note }));
     info.append(identity, metrics, stateItem);
 
     const icons = createElement('div', { className: 'course-icons' });
-    if (course.basketCount && course.basketCount !== '0') {
+    if (metadata) {
+      appendNativeCourseIcons(icons, metadata);
+    } else if (course.basketCount && course.basketCount !== '0') {
       const baskets = createElement('span', {
         className: 'carts',
         text: course.basketCount,
@@ -291,6 +488,51 @@
     main.append(detail);
     item.append(left, main);
     return item;
+  }
+
+  function applyNativeMetadataToVisibleCourses(visibleCourses, renderVersion) {
+    if (state.renderVersion !== renderVersion) return;
+    const list = document.querySelector('.course-info-list');
+    if (!list) return;
+
+    const renderedItems = [...list.querySelectorAll(':scope > .course-info-item')];
+    visibleCourses.forEach((course, index) => {
+      const key = courseKey(course.courseCode, course.lectureNumber);
+      if (!state.nativeCourseMetadata.has(key)) return;
+
+      const current = renderedItems.find((item) => item.dataset.srsCourseKey === key);
+      if (!current) return;
+      const wasChecked = current.querySelector('input[name="check"]')?.checked || false;
+      const replacement = createCourseItem(course, index);
+      const replacementRadio = replacement.querySelector('input[name="check"]');
+      if (replacementRadio) replacementRadio.checked = wasChecked;
+      current.replaceWith(replacement);
+    });
+    list.dataset.srsLiveSynced = 'true';
+  }
+
+  async function synchronizeVisibleNativeMetadata(visibleCourses, renderVersion) {
+    const sourcePages = [...new Set(visibleCourses.map((course) => (
+      Math.floor(course.originalIndex / PAGE_SIZE) + 1
+    )))];
+    await Promise.all(sourcePages.map((page) => fetchNativePageMetadata(page)));
+    if (state.renderVersion !== renderVersion) return;
+
+    const missingCourses = visibleCourses.filter((course) => (
+      !state.nativeCourseMetadata.has(courseKey(course.courseCode, course.lectureNumber))
+    ));
+    if (missingCourses.length > 0) {
+      const totalSourcePages = Math.max(1, Math.ceil(state.courses.length / PAGE_SIZE));
+      const neighborPages = new Set();
+      for (const course of missingCourses) {
+        const sourcePage = Math.floor(course.originalIndex / PAGE_SIZE) + 1;
+        if (sourcePage > 1) neighborPages.add(sourcePage - 1);
+        if (sourcePage < totalSourcePages) neighborPages.add(sourcePage + 1);
+      }
+      await Promise.all([...neighborPages].map((page) => fetchNativePageMetadata(page)));
+    }
+
+    applyNativeMetadataToVisibleCourses(visibleCourses, renderVersion);
   }
 
   function pageLink({ className, page, text = '', current = false, disabled = false, label = '' }) {
@@ -347,6 +589,8 @@
     if (!list) throw new Error('강좌 목록 영역을 찾지 못했습니다.');
 
     const model = SugangRelevanceCore.getPagination(page, state.courses.length, PAGE_SIZE);
+    state.renderVersion += 1;
+    const renderVersion = state.renderVersion;
     state.currentPage = model.currentPage;
     const courseActions = list.querySelector(':scope > #courseFabDiv');
     list.replaceChildren();
@@ -358,6 +602,7 @@
       visibleCourses.forEach((course, index) => list.append(createCourseItem(course, index)));
     }
     if (courseActions) list.append(courseActions);
+    list.dataset.srsLiveSynced = 'false';
     renderPagination(model);
     updateNativeCount(state.courses.length);
     updateNativePageFields(model.currentPage);
@@ -365,6 +610,8 @@
     if (shouldScroll) {
       document.querySelector('.search-result-con')?.scrollIntoView({ block: 'start', behavior: 'auto' });
     }
+
+    synchronizeVisibleNativeMetadata(visibleCourses, renderVersion);
   }
 
   function openCourseDetail(link) {
@@ -407,6 +654,17 @@
 
   function installClientInteractions() {
     document.addEventListener('click', (event) => {
+      const dialogTarget = event.target.closest?.('[data-dialog-target]');
+      if (dialogTarget) {
+        event.preventDefault();
+        event.stopPropagation();
+        const dialogName = dialogTarget.getAttribute('data-dialog-target');
+        const dialog = [...document.querySelectorAll('[data-dialog-name]')]
+          .find((element) => element.getAttribute('data-dialog-name') === dialogName);
+        dialog?.classList.add('opened');
+        return;
+      }
+
       const pageTarget = event.target.closest?.('[data-srs-page]');
       if (pageTarget) {
         event.preventDefault();
@@ -442,13 +700,18 @@
 
     insertStatus();
     installClientInteractions();
+    captureNativeMetadata(document);
+    const initialNativePage = Number(
+      directNamedElement(document.querySelector('form#CC100'), 'pageNo')?.value,
+    ) || 1;
+    state.nativePageRequests.set(initialNativePage, Promise.resolve());
     state.query = findQuery();
     const courses = await fetchAllCourses();
     state.courses = SugangRelevanceCore.sortCourses(courses, state.query);
     renderPage(1);
     updateStatus(
       'complete',
-      `Excel 전체 결과 ${state.courses.length}건을 교과목명·부제명 관련도순으로 정렬했습니다. 페이지 이동은 서버 재조회 없이 처리됩니다.`,
+      `Excel 전체 결과 ${state.courses.length}건을 교과목명·부제명 관련도순으로 정렬했습니다. 취소여석 등 실시간 표시는 원본 카드와 동기화되며, 페이지 순서는 정렬된 전체 결과 기준으로 유지됩니다.`,
     );
     document.documentElement.classList.add('srs-ready');
   }
