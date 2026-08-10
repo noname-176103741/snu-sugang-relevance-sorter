@@ -236,7 +236,7 @@
     const detail = createElement('a', {
       className: 'course-info-detail',
       attributes: {
-        href: '#',
+        href: 'javascript:void(0)',
         id: `course_info_detail_${index}`,
         name: 'course_info_detail',
         'data-srs-detail': 'true',
@@ -368,26 +368,41 @@
   }
 
   function openCourseDetail(link) {
-    const form = document.querySelector('form#CC100');
-    const year = directNamedElement(form, 'srchOpenSchyy')?.value || '';
-    const { semester, detailSemester } = semesterParts();
-    const parameters = new URLSearchParams({
-      openSchyy: year,
-      openShtmFg: semester,
-      openDetaShtmFg: detailSemester,
-      sbjtCd: link.dataset.courseCode || '',
-      ltNo: link.dataset.lectureNumber || '',
-      sugangFlag: 'P',
-    });
-    const width = 810;
-    const height = 715;
-    const left = Math.max(0, (screen.width - width) / 2);
-    const top = Math.max(0, (screen.height - height) / 2);
-    window.open(
-      `/sugang/cc/cc101.action?${parameters.toString()}`,
-      'CC107',
-      `toolbar=no,resizable=no,location=no,scrollbars=no,status=no,menubar=no,left=${left},top=${top},width=${width},height=${height}`,
-    );
+    const index = link.id.match(/^course_info_detail_(\d+)$/)?.[1];
+    if (index == null) throw new Error('강좌 상세 조회용 목록 번호를 찾지 못했습니다.');
+
+    const copyValue = (targetSelector, sourceName) => {
+      const target = document.querySelector(targetSelector);
+      const source = document.querySelector(`#${sourceName}_${index}`);
+      if (!target || !source) return false;
+      target.value = source.value || '';
+      return true;
+    };
+
+    const modal = document.querySelector('.course-info-detail-md');
+    const firstTab = document.querySelector('#tab1');
+    const requiredValuesCopied = [
+      copyValue('#layer_openSchyy', 'openSchyy'),
+      copyValue('#layer_openShtmFg', 'openShtmFg'),
+      copyValue('#layer_openDetaShtmFg', 'openDetaShtmFg'),
+      copyValue('#layer_sbjtCd', 'sbjtCd'),
+      copyValue('#layer_ltNo', 'ltNo'),
+      copyValue('#layer_sbjtSubhCd', 'sbjtSubhCd'),
+    ].every(Boolean);
+
+    const workType = document.querySelector('#layer_workType');
+    if (workType) workType.value = ' ';
+
+    if (!modal || !firstTab || !requiredValuesCopied) {
+      throw new Error('사이트의 강좌 상세 모달 구조를 찾지 못했습니다.');
+    }
+
+    modal.classList.add('opened');
+    const modalSection = modal.querySelector('.md-section');
+    if (modalSection) modalSection.scrollTop = 0;
+
+    // 사이트가 탭에 연결해 둔 원래 AJAX 조회와 렌더러를 그대로 사용한다.
+    firstTab.click();
   }
 
   function installClientInteractions() {
